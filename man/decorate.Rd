@@ -4,7 +4,7 @@
 \alias{decorate}
 \title{Decorates function to capture calls and return values}
 \usage{
-decorate(func, package, verbose)
+decorate(func, package, verbose, tracer.expr)
 }
 \arguments{
 \item{func}{function name as a character string}
@@ -16,8 +16,5 @@ decorate(func, package, verbose)
 \description{
 This function is respinsible for writing down capture information for decorated function calls.
 Replaces the function by decorated function in the global environment
-}
-\seealso{
-write_capture
 }
 

@@ -1,3 +1,6 @@
+
+noop <- function(...) {}
+
 #' @title Check if function is S3 generic
 #'
 #' @description Determine if function has a call to UseMethod. In that case there is no need to capture it.
@@ -9,59 +12,17 @@ is_s3_generic <- function(fname, env=.GlobalEnv) {
     if (is.null(body(f))) return(FALSE)
     uses <- codetools::findGlobals(f, merge = FALSE)$functions
     any(uses == "UseMethod")
-}
-
-#' @title Clean temporary directory
-#'
-#' @description Make sure temp dir is empty by deleting unnecessary files
-clean_temp <- function() {
-    for (file in list.files(cache$temp_dir, full.names = TRUE, pattern = "\\.RData|\\.[rR]$")) {
-        file.remove(file)
-    }
-}
-
-#' @title Parse and evaluate
-#'
-#' @description Function that wraps parse(eval(...)) call with tryCatch
-#' @param what text to be parse and evaluate
-parse_eval <- function(what) {
-    tryCatch({
-        eval(parse(text=what))
-        TRUE
-        },
-        error=function(e) {
-            FALSE
-            })
-}
-
-#' @title Quote language from evaluation
-#'
-#' @description In certain cases, language arguments (like calls), need to be quoated
-#' @param arg list of arguments
-quoter <- function(arg) {
-    if (is.list(arg)) {
-        org.attrs <- attributes(arg)
-        res <- lapply(arg, function(x) if(is.language(x)) enquote(x) else quoter(x))
-        attributes(res) <- org.attrs
-        res
-    }
-    else arg
+    #"UseMethod" %in% uses
 }
 
 #' @title Removes prefixes and quote from line
 #'
 #' @description Used for processing capture file information. Deletes prefixes to get essential information
-#' @param l input line
+#' @param prefix prefix
+#' @param line input line
 #' @seealso ProcessClosure
-substr_line <- function(l){
-    if (grepl("^quote\\(", l)){
-        ret.line <- strsplit(l, "\\(")[[1]][2];
-        if (substr(ret.line, nchar(ret.line), nchar(ret.line)) == ")")
-            ret.line <- substr(ret.line, 0, nchar(ret.line) - 1)
-    } else {
-        ret.line <- substr(l, 7, nchar(l))
-    }
-    ret.line
+strip_prefix <- function(prefix, line){
+    substr(line, nchar(prefix) + 1, nchar(line))
 }
 
 #' @title Check line's starting prefix
@@ -90,25 +51,6 @@ find_tests <- function(path) {
     }
     warning("No testthat directories found in ", path, call. = FALSE)
     return(NULL)
-}
-
-#' @title Reassing object in the namespace
-#'
-#' @description Record that particual line was executed.
-#' Used in statement coverage, needed for namespace replacement
-#' @param name name of an object to be replaced
-#' @param obj object that will be put in the environment
-#' @param env environment to be replaced in
-reassing_in_env <- function(name, obj, env) {
-    if (exists(name, env)) {
-        if (bindingIsLocked(name, env)) {
-            unlockBinding(name, env)
-            assign(name, obj, envir = env)
-            lockBinding(name, env)
-        } else {
-            assign(name, obj, envir = env)
-        }
-    }
 }
 
 #' @title Get function name without special characters
@@ -195,11 +137,11 @@ parseFunctionNames <- function(...) {
 list_functions <- function(src.root, recursive = TRUE) {
     functions = character()
     if (file.info(src.root)$isdir)
-        src.root <- list.files(src.root, pattern = "[rR]$", recursive = recursive, full.names = T)
+        src.root <- list.files(src.root, pattern = "\\.[rRsS]$", recursive = recursive, full.names = T)
     for (src.file in src.root) {
         exp <- parse(src.file)
         for (e in exp) {
-            if (typeof(e) == "language" && e[[1]] == as.name("<-") && is.name(e[[2]])) {
+            if (typeof(e) == "language" && (e[[1]] == as.name("<-") || e[[1]] == as.name("=")) && is.name(e[[2]])) {
                 name <- e[[2]]
                 what <- e[[3]]
                 if (typeof(what) == "language" && what[[1]] == as.name("function")) {
@@ -221,9 +163,128 @@ extract_example <- function(ex) {
 
 example_code <- function(fromFile) {
     code <- tools::parse_Rd(fromFile)
-    code <- code[sapply(code, function(x) attr(x, "Rd_tag") == "\\examples")]
+    code <- Filter(function(x) attr(x, "Rd_tag") == "\\examples", code)
     result = ""
     for (cc in code)
         result = c(result, extract_example(cc))
     result
 }
+
+e_msg <- function(x) { TRUE }
+
+#' @title Expects string arguments and returns the concatenation of all of them.
+#'
+#' @description Every argument must me a single string.
+#'
+#' @param sep optional separator
+#' @return character scalar
+concat <- function(..., sep="") {
+    for (x in as.list(...)) {
+        stopifnot(length(x) == 1 && e_msg("Got vector argument to concat!"))
+    }
+    ret <- paste0(..., sep=sep, collapse="")
+    stopifnot(length(ret) == 1 && e_msg("Result of concat() is not single string!"))
+    ret
+}
+
+#' @title Expects exactly one character vector argument and returns all the elements concatenated together.
+#'
+#' @description Every argument must me a single string.
+#'
+#' @param sep optional separator
+#' @return character scalar
+concatVec <- function(xs, sep="") {
+    ret <- paste(xs, collapse=sep)
+    stopifnot(length(ret) == 1 && e_msg("Result of concatVec() is not single string!"))
+    ret
+}
+
+# https://stat.ethz.ch/R-manual/R-devel/library/base/html/Quotes.html
+testIsSyntacticName <- function(name) {
+    syntacticNameRegex <- '^([a-zA-Z][a-zA-Z0-9._]*|[.]([a-zA-Z._][a-zA-Z0-9._]*)?)$'
+    reservedWords <- c(
+        'if', 'else', 'repeat', 'while', 'function', 'for', 'in', 'next',
+        'break', 'TRUE', 'FALSE', 'NULL', 'Inf', 'NaN', 'NA', 'NA_integer_',
+        'NA_real_', 'NA_complex_', 'NA_character_'
+    )
+    isReservedWord <- is.element(name, reservedWords)
+    matchesRegex <- length(grep(syntacticNameRegex, name, perl=TRUE))
+    !isReservedWord && matchesRegex
+}
+
+escapeNonSyntacticName <- function(name) {
+    isSyntacticName <- testIsSyntacticName(name)
+    if (isSyntacticName) {
+        name
+    } else {
+        concat('`', name, '`')
+    }
+}
+
+force_rebind <- function(what, value, env) {
+    sym <- as.name(what)
+    .Internal(unlockBinding(sym, env))
+    assign(what, value, env)
+    .Internal(lockBinding(sym, env))
+}
+
+getImportsEnvironment <- function(pkgName) {
+    parent.env(getNamespace(pkgName))
+}
+
+overwrite_export <- function(name, val, package) {
+    pkg.namespace_env <- getNamespace(package)
+    pkg.package_env <- as.environment(paste0("package:", package))
+    force_rebind(name, val, pkg.namespace_env)
+    is.exported <- exists(name, envir = pkg.package_env, inherits = FALSE)
+    if (is.exported) {
+        force_rebind(name, val, pkg.package_env)
+        if (package != "base") {
+            reverse_dependencies <- tryCatch(getNamespaceUsers(package), error = function(e) c())
+            lapply(reverse_dependencies, function(depPackage) {
+                importsEnv <- getImportsEnvironment(depPackage)
+                force_rebind(name, val, importsEnv)
+            })
+        }
+    }
+    invisible(NULL)
+}
+
+formatTime <- function(secs) {
+    x <- secs
+    hours <- floor(x / 3600)
+    x <- x - hours * 3600
+    minutes <- floor(x / 60)
+    x <- x - minutes * 60
+    x <- floor(x)
+
+    parts <- Filter(function(x) !is.null(x), c(
+        if (hours!=0) paste0(hours, 'h') else NULL,
+        if (minutes!=0) paste0(minutes, 'm') else NULL,
+        if (x!=0) paste0(x, 's') else NULL
+    ))
+    if (length(parts) == 0) '0s' else paste(parts, collapse=" ")
+}
+
+test_pkg_env <- function(package) {
+  list2env(as.list(getNamespace(package), all.names = TRUE),
+    parent = parent.env(getNamespace(package)))
+}
+
+run_package_tests <- function(src.root, verbose) {
+    if (package_uses_testthat(src.root)) {
+        package <- devtools::as.package(src.root)
+        test_path <- file.path(src.root, "tests", "testthat")
+        testthat::test_dir(test_path, filter = NULL, env = test_pkg_env(package$package))
+    } else if (file.exists(file.path(src.root, "tests"))) {
+        run_R_tests(src.root, verbose = TRUE)
+    } else {
+        if (verbose) message("Package has no tests!")
+    }
+}
+
+package_uses_testthat <- function(package.dir) {
+    test_path <- file.path(package.dir, "tests", "testthat")
+    file.exists(test_path)
+}
+
