@@ -1,3 +1,5 @@
+> This is old version. Proper genthat can be found here: [https://github.com/PRL-PRG/genthat](https://github.com/PRL-PRG/genthat).
+
 genthat - test case generation for R
 =====
 
